@@ -1,0 +1,103 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-05-05"
+---
+```{r}
+library(readxl)
+library(dplyr)
+day <- read.csv("day.csv")
+hour <- read.csv("hour.csv")
+kc <- read.csv("kc_house_data.csv")
+```
+
+```{r}
+# One-hot encoding for season
+day <- cbind(day, model.matrix(~factor(season) - 1, day))
+colnames(day)[(ncol(day)-2):ncol(day)] <- c("season_1", "season_2", "season_3")
+
+# Create feature MISTY and RAIN
+day$MISTY <- ifelse(day$weathersit == 2, 1, 0)
+day$RAIN <- ifelse(day$weathersit %in% c(3, 4), 1, 0)
+
+# Denormalize temp, hum, windspeed
+day$temp_celsius <- day$temp * (39 - (-8)) + (-8)
+day$hum_percent <- day$hum * 100
+day$windspeed_real <- day$windspeed * 67
+
+# Create feature days_since_2011
+day$dteday <- as.Date(day$dteday)
+day$days_since_2011 <- as.numeric(day$dteday - as.Date("2011-01-01"))
+
+df_model <- day %>% select(cnt, workingday, holiday, season_1, season_2, season_3,MISTY, RAIN, temp_celsius, hum_percent, windspeed_real,days_since_2011)
+```
+
+# Exercise 1. One dimensional Partial Dependence Plot
+```{r}
+# Librerías necesarias
+library(randomForest)
+library(pdp)
+library(ggplot2)
+
+# Ajustar el modelo Random Forest
+set.seed(123)
+modelo_rf <- randomForest(cnt ~ ., data = df_model, ntree = 500, importance = TRUE)
+
+# Partial Dependence Plot para cada variable
+p1 <- partial(modelo_rf, pred.var = "days_since_2011", grid.resolution = 20) %>% autoplot() + ggtitle("PDP: Days since 2011") + scale_y_continuous("predicted number of bike rentals", limits=c(0,NA))
+p2 <- partial(modelo_rf, pred.var = "temp_celsius", grid.resolution = 20) %>% autoplot() + ggtitle("PDP: Temperature (°C)") + scale_y_continuous("predicted number of bike rentals", limits=c(0,NA))
+p3 <- partial(modelo_rf, pred.var = "hum_percent", grid.resolution = 20) %>% autoplot() + ggtitle("PDP: Humidity (%)") + scale_y_continuous("predicted number of bike rentals", limits=c(0,NA))
+p4 <- partial(modelo_rf, pred.var = "windspeed_real", grid.resolution = 20) %>% autoplot() + ggtitle("PDP: Windspeed (real)") + scale_y_continuous("predicted number of bike rentals", limits=c(0,NA))
+
+print(p1)
+print(p2)
+print(p3)
+print(p4)
+
+```
+
+
+# Exercise 2. Bidimensional Partial Dependency Plot
+```{r}
+set.seed(123)
+
+pdp_2d <- partial(modelo_rf,
+                  pred.var = c("temp_celsius", "hum_percent"),
+                  grid.resolution = 20,
+                  train = df_model %>% sample_n(40),
+                  progress = "text")
+
+
+ggplot(pdp_2d, aes(x = temp_celsius, y = hum_percent, fill = yhat)) +
+  geom_tile(width = 1.5, height = 5) +
+  scale_fill_viridis_c(option = "C") +
+  labs(title = "PDP 2D: Temperature vs Humidity",
+       x = "Temperature (°C)",
+       y = "Humidity (%)",
+       fill = "Predicted bike rentals") +
+  theme_minimal()
+```
+
+# Ejercicio 3. PDP to explain the price of a house.
+```{r}
+kc_subset <- kc %>%
+  select(price, bedrooms, bathrooms, sqft_living, sqft_lot, floors, yr_built)
+
+set.seed(123)
+df_sample <- kc_subset %>% sample_n(1000)
+
+modelo_rf <- randomForest(price ~ ., data = df_sample, ntree = 100)
+
+vars <- c("bedrooms", "bathrooms", "sqft_living", "floors")
+
+# PDP unidimensionales
+for (v in vars) {
+  pd <- partial(modelo_rf, pred.var = v, train = df_sample)
+  print(
+    autoplot(pd) +
+      ggtitle(paste("PDP para", v)) + ylab("Precio promedio predicho")+
+      theme_minimal()
+  )
+}
+```
+
